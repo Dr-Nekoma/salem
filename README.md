@@ -17,3 +17,4 @@ Sal is a purely functional, dynamically typed, simply-aritied, concatenative pro
 * [Erlang](http://www.erlang.org/)
 * [Haskell](https://www.haskell.org/)
 * [Zig](https://ziglang.org/)
+* [Roc](https://www.roc-lang.org/)
