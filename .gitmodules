@@ -1,0 +1,3 @@
+[submodule "sal.kak"]
+	path = sal.kak
+	url = https://github.com/z-silver/sal.kak
