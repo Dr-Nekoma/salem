@@ -182,8 +182,8 @@ immediately interpret the value before continuing with the reading:
 
 - Vars are treated as variable references to data available in the reader's
 environment. Typically they are used to refer to user-defined values, but they
-can also refer to modules, files that the user wish to embed in the program, and
-other such things.
+can also refer to modules, files that the user wants to embed in the program,
+environment variables, and other such things.
 - Combos are treated as function calls, with the left element being the the
 function and its right element being the argument or argument list.
 
