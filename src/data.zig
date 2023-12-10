@@ -17,12 +17,16 @@ pub const Tag = enum(u2) {
 
 pub const Instruction = enum(u5) {
     skip = 0, // normally not explicitly used
+
+    // stack manipulation
     dup,
     pop,
     swap,
     to_a,
     from_a,
     pop_b,
+
+    // data primitives
     lit,
     self,
     zero,
@@ -31,6 +35,8 @@ pub const Instruction = enum(u5) {
     set_empty,
     table_empty,
     tuple_empty,
+
+    // basic operations
     ord,
     is_zero,
     bit_not,
@@ -41,6 +47,9 @@ pub const Instruction = enum(u5) {
     sub,
     div,
     divmod,
+
+    // control flow
+    // skip technically belongs here
     if_else,
     then,
     call,
