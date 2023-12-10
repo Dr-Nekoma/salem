@@ -21,7 +21,7 @@ pub fn main() !void {
         "EM size: {}\nFixnum size: {}\nCell size: {}\nHeader size: {}\n",
         .{
             @sizeOf(EM),
-            @bitSizeOf(Cell.IData),
+            @bitSizeOf(Cell.idata),
             @bitSizeOf(Cell),
             @bitSizeOf(Header),
         },
@@ -45,7 +45,25 @@ pub fn main() !void {
     try stdout.print("align: {}\n", .{@alignOf(Cell)});
     const num = Cell.fixnum(413).data;
     try stdout.print("413: {?}\n", .{num});
-    try stdout.print("endianness: {}, {}\n", .{ 4, @as(Cell.U, @bitCast(Cell.fixnum(4))) });
+    try stdout.print("endianness: {}, {}\n", .{ 4, @as(Cell.u, @bitCast(Cell.fixnum(4))) });
+    const code = data.Code.from_array(.{
+        .call,
+        .ret,
+        .skip,
+        .skip,
+        .skip,
+        .skip,
+        .skip,
+        .skip,
+        .skip,
+        .skip,
+        .dup,
+        .pop,
+    });
+    try stdout.print("{?}, {any}\n", .{
+        code.current_instruction(),
+        code.step().to_array(),
+    });
     try bw.flush();
 }
 

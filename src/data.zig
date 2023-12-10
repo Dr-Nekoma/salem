@@ -2,25 +2,94 @@ const std = @import("std");
 const Int = std.meta.Int;
 
 pub const Tag = enum(u2) {
-    const Self = @This();
+    pointer = 0,
+    fixnum,
+    constant,
+    code,
 
-    Code,
-    Fixnum,
-    Constant,
-    Pointer,
-
-    pub inline fn is_ptr(self: Self) bool {
-        return self == .Pointer;
+    pub inline fn is_ptr(self: @This()) bool {
+        return self == .pointer;
     }
-
-    pub inline fn is_immediate(self: Self) bool {
+    pub inline fn is_immediate(self: @This()) bool {
         return !self.is_ptr();
     }
 };
 
-pub const Instruction = u6; // not sure the exact size to use here
-const instructions_per_cell = (@bitSizeOf(usize) - @bitSizeOf(Tag)) / @bitSizeOf(Instruction);
-pub const Code = [instructions_per_cell]Instruction;
+pub const Instruction = enum(u5) {
+    skip = 0, // normally not explicitly used
+    dup,
+    pop,
+    swap,
+    to_a,
+    from_a,
+    pop_b,
+    lit,
+    self,
+    zero,
+    str_empty,
+    list_empty,
+    set_empty,
+    table_empty,
+    tuple_empty,
+    ord,
+    is_zero,
+    bit_not,
+    bit_and,
+    ash,
+    add,
+    mul,
+    sub,
+    div,
+    divmod,
+    if_else,
+    then,
+    call,
+    recur,
+    tailcall,
+    tailrecur,
+    ret,
+};
+
+pub const instructions_per_cell = @bitSizeOf(Cell.udata) / @bitSizeOf(Instruction);
+
+pub const Code = packed struct(Cell.u) {
+    tag: Tag = .code,
+    _: Padding = 0,
+    payload: Payload,
+
+    pub const Payload =
+        Int(.unsigned, @bitSizeOf(Instruction) * instructions_per_cell);
+
+    pub const Padding =
+        Int(.unsigned, @bitSizeOf(Cell.u) - @bitSizeOf(Payload) - @bitSizeOf(Tag));
+
+    pub inline fn current_instruction(self: @This()) Instruction {
+        return @enumFromInt(
+            self.payload >> @bitSizeOf(Payload) - @bitSizeOf(Instruction),
+        );
+    }
+    pub inline fn step(self: @This()) @This() {
+        return .{ .payload = self.payload << @bitSizeOf(Instruction) };
+    }
+    pub fn to_array(self: @This()) [instructions_per_cell]Instruction {
+        // for debugging
+        var code = self;
+        var instructions: [instructions_per_cell]Instruction = undefined;
+        for (instructions, 0..) |_, index| {
+            instructions[index] = code.current_instruction();
+            code = code.step();
+        }
+        return instructions;
+    }
+    pub fn from_array(instructions: [instructions_per_cell]Instruction) @This() {
+        var code: Payload = 0;
+        for (instructions) |inst| {
+            code <<= @bitSizeOf(Instruction);
+            code |= @intFromEnum(inst);
+        }
+        return .{ .payload = code };
+    }
+};
 
 pub const Block_Type = enum(Int(.unsigned, 8 - @bitSizeOf(Tag))) {
     ShortStr,
@@ -42,67 +111,62 @@ pub const Block_Type = enum(Int(.unsigned, 8 - @bitSizeOf(Tag))) {
     _,
 };
 
-pub const Header = packed struct(usize) {
-    pub const Size = Int(.unsigned, 8 * (@bitSizeOf(usize) / 32));
-    safety_tag: Tag = .Fixnum,
+pub const Header = packed struct(Cell.u) {
+    pub const Size = Int(.unsigned, 8 * (@bitSizeOf(Cell.u) / 32));
+    safety_tag: Tag = .fixnum,
     type_tag: Block_Type,
     size: Size,
-    rc: Int(.signed, @bitSizeOf(usize) - @bitSizeOf(u8) - @bitSizeOf(Size)),
+    rc: Int(.signed, @bitSizeOf(Cell.u) - @bitSizeOf(u8) - @bitSizeOf(Size)),
 
-    const Self = @This();
-    pub fn to_Block(self: *Self) type {
+    pub fn to_Block(self: *@This()) type {
         return switch (self.type_tag) {
             inline else => |tag| Block(tag),
         };
     }
 };
 
-pub const Constant = enum (Cell.Udata) {
-    _
-};
+pub const Constant = enum(Cell.udata) { _ };
 
 // it would be nice if we could use a tagged union for this
 pub const Cell = packed struct(usize) {
-    const Self = @This();
-    const size = @bitSizeOf(usize);
-    const data_size = size - @bitSizeOf(Tag);
+    const data_size = @bitSizeOf(u) - @bitSizeOf(Tag);
 
     tag: Tag,
-    data: IData,
+    data: idata,
 
-    pub const U = usize;
-    pub const I = isize;
-    pub const UData = Int(.unsigned, data_size);
-    pub const IData = Int(.signed, data_size);
+    pub const u = usize;
+    pub const i = isize;
+    pub const udata = Int(.unsigned, data_size);
+    pub const idata = Int(.signed, data_size);
 
-    pub inline fn is_ptr(self: Self) bool {
+    pub inline fn is_ptr(self: @This()) bool {
         return self.tag.is_ptr();
     }
 
-    pub inline fn is_fixnum(self: Self) bool {
+    pub inline fn is_fixnum(self: @This()) bool {
         return self.tag == .Fixnum;
     }
 
-    pub inline fn is_immediate(self: Self) bool {
+    pub inline fn is_immediate(self: @This()) bool {
         return self.tag.is_immediate();
     }
 
-    pub inline fn to_UData(self: Self) UData {
-        return @as(UData, @bitCast(self.data));
+    pub inline fn to_udata(self: @This()) udata {
+        return @as(udata, @bitCast(self.data));
     }
 
-    pub inline fn fixnum(n: IData) Self {
-        return .{ .tag = .Fixnum, .data = n };
+    pub inline fn fixnum(n: idata) @This() {
+        return .{ .tag = .fixnum, .data = n };
     }
 
-    pub inline fn to_ptr(self: Self) ?*Header {
-        return if (self.is_ptr)
-            @as(?*Header, @bitCast(Self{ .data = self.data, .tag = 0 }))
+    pub inline fn to_ptr(self: @This()) ?*Header {
+        return if (self.is_ptr())
+            @as(?*Header, @bitCast(@as(u, self.data) << @bitSizeOf(Tag)))
         else
             null;
     }
 
-    pub const unspecified = Self{ .tag = .constant, .data = 0 };
+    pub const unspecified = @This(){ .tag = .constant, .data = 0 };
 };
 
 pub fn Block(comptime block_type: Block_Type) type {
@@ -127,18 +191,16 @@ pub fn Block(comptime block_type: Block_Type) type {
 
 pub fn Stack(comptime Element: type) type {
     const stack_index_width = 4;
-    const StackIndex = Int(.unsigned, stack_index_width);
+    const Stack_Index = Int(.unsigned, stack_index_width);
     const stack_depth = 1 << stack_index_width;
     return struct {
-        const Self = @This();
-
         overflow: Cell,
-        base: StackIndex,
-        next: StackIndex,
+        base: Stack_Index,
+        next: Stack_Index,
         is_full: bool,
         stack: [stack_depth]Element,
 
-        pub fn top(self: *const Self) ?*Element {
+        pub fn top(self: *const @This()) ?*Element {
             const base = self.base;
             const next = self.next;
             if (base == next and !self.is_full) return null;
