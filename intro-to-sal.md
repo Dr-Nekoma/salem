@@ -203,6 +203,45 @@ ordinary higher-order programming are actually the same thing*.
 
 ## Data Model
 
+In Sal, every value is a function. Functions carry around their arity information.
+Each function has a main arity, which is what is returned by default when we look
+up a function's arity, though it may also support others. Unless otherwise specified,
+whenever a function's arity is mentioned we are referring to the main arity.
+
+An arity is simply a pair of natural numbers, describing how many inputs are
+required and how many outputs are produced from those required inputs. It is
+possible to give a function more arguments than it requires, in which case
+those values simply flow through unchanged. We shall elaborate on the
+implications of this model in the next section; for now, this exposition is
+sufficient to explain Sal's basic data types.
+
+### Tuples
+
+Functions with an input arity of 0 are called tuples. A tuple's size is
+considered to be its output arity. Tuples are by far the most common data type
+in Sal, because they represent constant values.
+
+Tuples may be eager or lazy. When referring to tuples in text, by default we
+assume them to be eager unless otherwise specified. The main difference between
+them is whether or not we know statically if they will fail.
+
+Tuples of size 0 are the most primitive values in Sal. Because calling a function
+may fail, and tuples have no inputs, a failing tuple will always fail while a
+successful tuple will always succeed. This means that tuples of size 0 are the
+closest thing to boolean values that Sal has. In particular, the successful
+0-tuple can be identified with the boolean value `true`, but it is also the
+canonical empty tuple and the canonical 0-input identity function. Meanwhile,
+the failing 0-tuple is identified with the boolean value `false`, though it
+is also the canonical 0-in 0-out failure function. Lazy 0-tuples are simply
+booleans whose value cannot be determined without running them, and may
+either succeed or fail.
+
+Tuples of size 1 can be divided into two groups: promises and literals. Promises
+are the primary mechanism for lazy evaluation, though they are also important
+for composing higher order functions. Meanwhile, literals correspond to what
+other languages would consider their value types. The distinguishing feature of
+literals is that _they are statically known return themselves when called_.
+
 _TODO_
 
 ## Theory of Simply-aritied Languages
