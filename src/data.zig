@@ -1,16 +1,23 @@
 const std = @import("std");
 const Int = std.meta.Int;
 
-pub const Tag = enum(u2) {
-    pointer = 0,
-    fixnum,
-    constant,
-    code,
+const assert = std.debug.assert;
 
-    pub inline fn is_ptr(self: @This()) bool {
-        return self == .pointer;
+pub const Tag = enum(u2) {
+    shared_pointer = 0b00,
+    unique_pointer = 0b10,
+    constant = 0b01,
+    code = 0b11,
+
+    pub inline fn is_unique(self: Tag) bool {
+        return self == .unique_pointer;
     }
-    pub inline fn is_immediate(self: @This()) bool {
+
+    pub inline fn is_ptr(self: Tag) bool {
+        return @as(u1, @truncate(@intFromEnum(self))) == 0;
+    }
+
+    pub inline fn is_immediate(self: Tag) bool {
         return !self.is_ptr();
     }
 };
@@ -57,12 +64,12 @@ pub const Instruction = enum(u5) {
     ret,
 };
 
-pub const instructions_per_cell = @bitSizeOf(Cell.udata) / @bitSizeOf(Instruction);
-
 pub const Code = packed struct(Cell.u) {
     tag: Tag = .code,
     _: Padding = 0,
     payload: Payload,
+
+    pub const instructions_per_cell = @bitSizeOf(Cell.udata) / @bitSizeOf(Instruction);
 
     pub const Payload =
         Int(.unsigned, @bitSizeOf(Instruction) * instructions_per_cell);
@@ -70,15 +77,18 @@ pub const Code = packed struct(Cell.u) {
     pub const Padding =
         Int(.unsigned, @bitSizeOf(Cell.u) - @bitSizeOf(Payload) - @bitSizeOf(Tag));
 
-    pub inline fn current_instruction(self: @This()) Instruction {
+    pub inline fn current_instruction(self: Code) Instruction {
+        assert(self.tag == .code);
         return @enumFromInt(
             self.payload >> @bitSizeOf(Payload) - @bitSizeOf(Instruction),
         );
     }
-    pub inline fn step(self: @This()) @This() {
+    pub inline fn step(self: Code) Code {
+        assert(self.tag == .code);
         return .{ .payload = self.payload << @bitSizeOf(Instruction) };
     }
-    pub fn to_array(self: @This()) [instructions_per_cell]Instruction {
+    pub fn to_array(self: Code) [instructions_per_cell]Instruction {
+        assert(self.tag == .code);
         // for debugging
         var code = self;
         var instructions: [instructions_per_cell]Instruction = undefined;
@@ -88,7 +98,7 @@ pub const Code = packed struct(Cell.u) {
         }
         return instructions;
     }
-    pub fn from_array(instructions: [instructions_per_cell]Instruction) @This() {
+    pub fn from_array(instructions: [instructions_per_cell]Instruction) Code {
         var code: Payload = 0;
         for (instructions) |inst| {
             code <<= @bitSizeOf(Instruction);
@@ -115,17 +125,16 @@ pub const Block_Type = enum(Int(.unsigned, 8 - @bitSizeOf(Tag))) {
     mset_branch,
     mset,
     @"fn",
-    _,
 };
 
 pub const Header = packed struct(Cell.u) {
     pub const Size = Int(.unsigned, 8 * (@bitSizeOf(Cell.u) / 32));
-    safety_tag: Tag = .fixnum,
+    safety_tag: Tag = .constant,
     type_tag: Block_Type,
     size: Size,
     rc: Int(.signed, @bitSizeOf(Cell.u) - @bitSizeOf(u8) - @bitSizeOf(Size)),
 
-    pub fn to_Block(self: *@This()) type {
+    pub fn to_Block(self: *Header) type {
         return switch (self.type_tag) {
             inline else => |tag| Block(tag),
         };
@@ -146,34 +155,33 @@ pub const Cell = packed struct(usize) {
     pub const udata = Int(.unsigned, data_size);
     pub const idata = Int(.signed, data_size);
 
-    pub inline fn is_ptr(self: @This()) bool {
+    pub inline fn is_ptr(self: Cell) bool {
         return self.tag.is_ptr();
     }
 
-    pub inline fn is_fixnum(self: @This()) bool {
-        return self.tag == .Fixnum;
-    }
-
-    pub inline fn is_immediate(self: @This()) bool {
+    pub inline fn is_immediate(self: Cell) bool {
         return self.tag.is_immediate();
     }
 
-    pub inline fn to_udata(self: @This()) udata {
+    pub inline fn to_udata(self: Cell) udata {
         return @as(udata, @bitCast(self.data));
     }
 
-    pub inline fn fixnum(n: idata) @This() {
-        return .{ .tag = .fixnum, .data = n };
-    }
-
-    pub inline fn to_ptr(self: @This()) ?*Header {
-        return if (self.is_ptr())
-            @as(?*Header, @bitCast(@as(u, self.data) << @bitSizeOf(Tag)))
+    pub inline fn to_mutable(self: Cell) ?*Header {
+        return if (self.is_unique())
+            @constCast(self.to_ptr().?)
         else
             null;
     }
 
-    pub const unspecified = @This(){ .tag = .constant, .data = 0 };
+    pub inline fn to_ptr(self: Cell) ?*const Header {
+        return if (self.is_ptr())
+            @as(?*const Header, @bitCast(@as(u, self.data) << @bitSizeOf(Tag)))
+        else
+            null;
+    }
+
+    pub const unspecified = Cell{ .tag = .constant, .data = 0 };
 };
 
 pub fn Block(comptime block_type: Block_Type) type {
@@ -183,7 +191,6 @@ pub fn Block(comptime block_type: Block_Type) type {
         .StrBranch, .ListBranch => 18,
         .Set, .Dict, .Mset => 20,
         .ShortDict, .ShortMset => 32,
-        else => @compileError("Unknown block type"),
     };
     if (size < 1) @compileError("Blocks must have at least one element");
     return extern struct {
