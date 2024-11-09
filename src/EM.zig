@@ -1,13 +1,13 @@
-const data = @import("data.zig");
-const Cell = data.Cell;
-const Stack = data.Stack;
+const sal_data = @import("data.zig"); // FIXME: find better name
+const Cell = sal_data.Cell;
+const Stack = sal_data.Stack;
 const std = @import("std");
 const Int = std.meta.Int;
 
 const Frame = struct {
     address: Cell,
-    offset: data.Header.Size,
-    cache: data.Code,
+    offset: sal_data.Header.Size,
+    cache: sal_data.Code,
 };
 
 const Backtrack = struct {
