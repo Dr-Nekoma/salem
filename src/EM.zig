@@ -6,7 +6,7 @@ const Int = std.meta.Int;
 
 const Frame = struct {
     address: Cell,
-    offset: sal_data.Header.Size,
+    offset: Cell.Fixnum,
     cache: sal_data.Code,
 };
 

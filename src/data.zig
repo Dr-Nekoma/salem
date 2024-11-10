@@ -2,22 +2,113 @@ const std = @import("std");
 const Int = std.meta.Int;
 
 const assert = std.debug.assert;
+const tag_size = @ctz(@as(usize, @alignOf(*usize)));
+const payload_size = @bitSizeOf(usize) - tag_size;
 
-pub const Tag = enum(u2) {
+pub const Cell = packed struct(usize) {
+    pub const Union = Cell_Union;
+    pub const Tag = Cell_Tag;
+
+    pub const U = Int(.unsigned, payload_size);
+    pub const I = Int(.signed, payload_size);
+
+    pub const Fixnum = Int(.signed, payload_size - 1);
+    pub const Header = packed struct(Fixnum) {
+        _: Fixnum,
+    };
+
+    tag: Tag,
+    payload: U,
+
+    comptime {
+        if (tag_size < 2) {
+            @compileError("Unsupported architecture");
+        }
+        assert(@typeInfo(Union).@"union".tag_type == Tag);
+        assert(tag_size == @bitSizeOf(Tag));
+        for (@typeInfo(Union).@"union".fields) |field| {
+            if (@typeInfo(field.type) == .pointer) {
+                assert(tag_size == @ctz(@as(usize, @alignOf(field.type))));
+            } else {
+                assert(@bitSizeOf(field.type) + tag_size == @bitSizeOf(usize));
+            }
+            const ptr: Cell = .{
+                .tag = @unionInit(Union, field.name, undefined),
+                .payload = 1,
+            };
+            const ptr_roundtrip = Cell.from_union(ptr.to_union());
+            assert(ptr.payload == ptr_roundtrip.payload);
+            assert(ptr.tag == ptr_roundtrip.tag);
+        }
+    }
+
+    pub fn from_union(source: Union) Cell {
+        switch (source) {
+            inline else => |payload| {
+                const Payload = @TypeOf(payload);
+                return .{
+                    .tag = source,
+                    .payload = if (@typeInfo(Payload) == .pointer)
+                        @intCast(@intFromPtr(payload) >> tag_size)
+                    else if (@typeInfo(Payload) == .@"enum")
+                        @intFromEnum(payload)
+                    else
+                        @bitCast(payload),
+                };
+            },
+        }
+    }
+
+    pub fn to_union(self: Cell) Union {
+        switch (self.tag) {
+            inline else => |tag| {
+                const Payload = std.meta.TagPayload(Union, tag);
+                const mask: usize = @truncate(std.math.maxInt(usize) << tag_size);
+                return @unionInit(
+                    Union,
+                    @tagName(tag),
+                    if (@typeInfo(Payload) == .pointer)
+                        @ptrFromInt(@as(usize, @bitCast(self)) & mask)
+                    else if (@typeInfo(Payload) == .@"enum")
+                        @enumFromInt(self.payload)
+                    else
+                        @bitCast(self.payload),
+                );
+            },
+        }
+    }
+};
+
+const Cell_Union = union(Cell_Tag) {
+    shared_pointer: *Cell,
+    unique_pointer: *Cell,
+    constant: Constant,
+    code: Code,
+
+    pub inline fn from_cell(cell: Cell) Cell.Union {
+        return cell.to_union();
+    }
+
+    pub inline fn is_ptr(self: Cell.Union) bool {
+        return @as(Cell_Tag, self).is_ptr();
+    }
+
+    pub inline fn is_immediate(self: Cell.Union) bool {
+        return @as(Cell_Tag, self).is_immediate();
+    }
+};
+
+const Cell_Tag = enum(Int(.unsigned, tag_size)) {
     shared_pointer = 0b00,
     unique_pointer = 0b10,
     constant = 0b01,
     code = 0b11,
 
-    pub inline fn is_unique(self: Tag) bool {
-        return self == .unique_pointer;
+    pub inline fn is_ptr(self: Cell_Tag) bool {
+        return @intFromEnum(self) & 0b1 == 0;
     }
 
-    pub inline fn is_ptr(self: Tag) bool {
-        return @as(u1, @truncate(@intFromEnum(self))) == 0;
-    }
-
-    pub inline fn is_immediate(self: Tag) bool {
+    pub inline fn is_immediate(self: Cell_Tag) bool {
         return !self.is_ptr();
     }
 };
@@ -64,31 +155,27 @@ pub const Instruction = enum(u5) {
     ret,
 };
 
-pub const Code = packed struct(Cell.u) {
-    tag: Tag = .code,
-    _: Padding = 0,
+pub const Code = packed struct(Cell.U) {
+    const Padding = enum(Int(.unsigned, @bitSizeOf(Cell.U) - @bitSizeOf(Payload))) {
+        padding = 0,
+    };
+    _: Padding = .padding,
     payload: Payload,
 
-    pub const instructions_per_cell = @bitSizeOf(Cell.udata) / @bitSizeOf(Instruction);
+    pub const instructions_per_cell = @bitSizeOf(Cell.U) / @bitSizeOf(Instruction);
 
     pub const Payload =
         Int(.unsigned, @bitSizeOf(Instruction) * instructions_per_cell);
 
-    pub const Padding =
-        Int(.unsigned, @bitSizeOf(Cell.u) - @bitSizeOf(Payload) - @bitSizeOf(Tag));
-
     pub inline fn current_instruction(self: Code) Instruction {
-        assert(self.tag == .code);
         return @enumFromInt(
             self.payload >> @bitSizeOf(Payload) - @bitSizeOf(Instruction),
         );
     }
     pub inline fn step(self: Code) Code {
-        assert(self.tag == .code);
         return .{ .payload = self.payload << @bitSizeOf(Instruction) };
     }
     pub fn to_array(self: Code) [instructions_per_cell]Instruction {
-        assert(self.tag == .code);
         // for debugging
         var code = self;
         var instructions: [instructions_per_cell]Instruction = undefined;
@@ -108,7 +195,7 @@ pub const Code = packed struct(Cell.u) {
     }
 };
 
-pub const Block_Type = enum(Int(.unsigned, 8 - @bitSizeOf(Tag))) {
+pub const Block_Type = enum(Int(.unsigned, 8 - @bitSizeOf(Cell_Tag))) {
     short_str,
     str_branch,
     str,
@@ -127,12 +214,11 @@ pub const Block_Type = enum(Int(.unsigned, 8 - @bitSizeOf(Tag))) {
     @"fn",
 };
 
-pub const Header = packed struct(Cell.u) {
-    pub const Size = Int(.unsigned, 8 * (@bitSizeOf(Cell.u) / 32));
-    safety_tag: Tag = .constant,
+pub const Header = packed struct(Cell.U) {
+    pub const Size = Int(.unsigned, 8 * (@bitSizeOf(Cell.U) / 32));
+    safety_tag: Cell_Tag = .constant,
     type_tag: Block_Type,
     size: Size,
-    rc: Int(.signed, @bitSizeOf(Cell.u) - @bitSizeOf(u8) - @bitSizeOf(Size)),
 
     pub fn to_Block(self: *Header) type {
         return switch (self.type_tag) {
@@ -141,48 +227,7 @@ pub const Header = packed struct(Cell.u) {
     }
 };
 
-pub const Constant = enum(Cell.udata) { _ };
-
-// it would be nice if we could use a tagged union for this
-pub const Cell = packed struct(usize) {
-    const data_size = @bitSizeOf(u) - @bitSizeOf(Tag);
-
-    tag: Tag,
-    data: idata,
-
-    pub const u = usize;
-    pub const i = isize;
-    pub const udata = Int(.unsigned, data_size);
-    pub const idata = Int(.signed, data_size);
-
-    pub inline fn is_ptr(self: Cell) bool {
-        return self.tag.is_ptr();
-    }
-
-    pub inline fn is_immediate(self: Cell) bool {
-        return self.tag.is_immediate();
-    }
-
-    pub inline fn to_udata(self: Cell) udata {
-        return @as(udata, @bitCast(self.data));
-    }
-
-    pub inline fn to_mutable(self: Cell) ?*Header {
-        return if (self.is_unique())
-            @constCast(self.to_ptr().?)
-        else
-            null;
-    }
-
-    pub inline fn to_ptr(self: Cell) ?*const Header {
-        return if (self.is_ptr())
-            @as(?*const Header, @bitCast(@as(u, self.data) << @bitSizeOf(Tag)))
-        else
-            null;
-    }
-
-    pub const unspecified = Cell{ .tag = .constant, .data = 0 };
-};
+pub const Constant = enum(Cell.U) { _ };
 
 pub fn Block(comptime block_type: Block_Type) type {
     const size = switch (block_type) {
@@ -221,4 +266,10 @@ pub fn Stack(comptime Element: type) type {
             return &(self.stack[next -% 1]);
         }
     };
+}
+
+test "everything" {
+    _ = Cell;
+    _ = Instruction;
+    _ = Code;
 }
