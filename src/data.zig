@@ -2,12 +2,29 @@ const std = @import("std");
 const Int = std.meta.Int;
 
 const assert = std.debug.assert;
-const tag_size = @ctz(@as(usize, @alignOf(*usize)));
-const payload_size = @bitSizeOf(usize) - tag_size;
+
+pub fn Padding(comptime size: comptime_int) type {
+    return enum(Int(.unsigned, size)) {
+        padding = 0,
+    };
+}
 
 pub const Cell = packed struct(usize) {
+    pub const tag_size = 2;
+    pub const payload_size = @bitSizeOf(*usize) - tag_size;
+
+    comptime {
+        if (@ctz(@as(usize, @alignOf(*usize))) < tag_size) {
+            @compileError("Unsupported architecture");
+        }
+    }
+
     pub const Union = Cell_Union;
     pub const Tag = Cell_Tag;
+
+    comptime {
+        assert(@bitSizeOf(Tag) == tag_size);
+    }
 
     pub const U = Int(.unsigned, payload_size);
     pub const I = Int(.signed, payload_size);
@@ -21,20 +38,17 @@ pub const Cell = packed struct(usize) {
     payload: U,
 
     comptime {
-        if (tag_size < 2) {
-            @compileError("Unsupported architecture");
-        }
         assert(@typeInfo(Union).@"union".tag_type == Tag);
         assert(tag_size == @bitSizeOf(Tag));
         for (@typeInfo(Union).@"union".fields) |field| {
             if (@typeInfo(field.type) == .pointer) {
-                assert(tag_size == @ctz(@as(usize, @alignOf(field.type))));
+                assert(tag_size <= @ctz(@as(usize, @alignOf(field.type))));
             } else {
                 assert(@bitSizeOf(field.type) + tag_size == @bitSizeOf(usize));
             }
             const ptr: Cell = .{
                 .tag = @unionInit(Union, field.name, undefined),
-                .payload = 1,
+                .payload = 1 << (@alignOf(*Cell) - tag_size),
             };
             const ptr_roundtrip = Cell.from_union(ptr.to_union());
             assert(ptr.payload == ptr_roundtrip.payload);
@@ -63,7 +77,9 @@ pub const Cell = packed struct(usize) {
         switch (self.tag) {
             inline else => |tag| {
                 const Payload = std.meta.TagPayload(Union, tag);
-                const mask: usize = @truncate(std.math.maxInt(usize) << tag_size);
+                const mask: usize = comptime @truncate(
+                    std.math.maxInt(usize) << @alignOf(*Cell),
+                );
                 return @unionInit(
                     Union,
                     @tagName(tag),
@@ -98,7 +114,7 @@ const Cell_Union = union(Cell_Tag) {
     }
 };
 
-const Cell_Tag = enum(Int(.unsigned, tag_size)) {
+const Cell_Tag = enum(Int(.unsigned, Cell.tag_size)) {
     shared_pointer = 0b00,
     unique_pointer = 0b10,
     constant = 0b01,
@@ -156,10 +172,7 @@ pub const Instruction = enum(u5) {
 };
 
 pub const Code = packed struct(Cell.U) {
-    const Padding = enum(Int(.unsigned, @bitSizeOf(Cell.U) - @bitSizeOf(Payload))) {
-        padding = 0,
-    };
-    _: Padding = .padding,
+    _: Padding(@bitSizeOf(Cell.U) - @bitSizeOf(Payload)) = .padding,
     payload: Payload,
 
     pub const instructions_per_cell = @bitSizeOf(Cell.U) / @bitSizeOf(Instruction);
@@ -215,8 +228,11 @@ pub const Block_Type = enum(Int(.unsigned, 8 - @bitSizeOf(Cell_Tag))) {
 };
 
 pub const Header = packed struct(Cell.U) {
+    const Safety_Tag = enum(@typeInfo(Cell_Tag).@"enum".tag_type) {
+        constant = @intFromEnum(Cell_Tag.constant),
+    };
     pub const Size = Int(.unsigned, 8 * (@bitSizeOf(Cell.U) / 32));
-    safety_tag: Cell_Tag = .constant,
+    safety_tag: Safety_Tag = .constant,
     type_tag: Block_Type,
     size: Size,
 
