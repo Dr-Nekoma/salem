@@ -1,12 +1,5 @@
-const std = @import("std");
-const Int = std.meta.Int;
-
-const assert = std.debug.assert;
-
 pub fn Padding(comptime size: comptime_int) type {
-    return enum(Int(.unsigned, size)) {
-        padding = 0,
-    };
+    return enum(Int(.unsigned, size)) { padding = 0 };
 }
 
 pub const Cell = packed struct(usize) {
@@ -19,12 +12,39 @@ pub const Cell = packed struct(usize) {
         }
     }
 
-    pub const Union = Cell_Union;
-    pub const Tag = Cell_Tag;
+    pub const Union = union(Tag) {
+        shared_pointer: *Cell,
+        unique_pointer: *Cell,
+        constant: Constant,
+        code: Code,
 
-    comptime {
-        assert(@bitSizeOf(Tag) == tag_size);
-    }
+        pub fn from_cell(cell: Cell) Union {
+            return cell.to_union();
+        }
+
+        pub fn is_ptr(self: Union) bool {
+            return @as(Tag, self).is_ptr();
+        }
+
+        pub fn is_immediate(self: Union) bool {
+            return @as(Tag, self).is_immediate();
+        }
+    };
+
+    pub const Tag = enum(Int(.unsigned, tag_size)) {
+        shared_pointer = 0b00,
+        unique_pointer = 0b10,
+        constant = 0b01,
+        code = 0b11,
+
+        pub fn is_ptr(self: Tag) bool {
+            return @intFromEnum(self) & 0b1 == 0;
+        }
+
+        pub fn is_immediate(self: Tag) bool {
+            return !self.is_ptr();
+        }
+    };
 
     pub const U = Int(.unsigned, payload_size);
     pub const I = Int(.signed, payload_size);
@@ -92,40 +112,6 @@ pub const Cell = packed struct(usize) {
                 );
             },
         }
-    }
-};
-
-const Cell_Union = union(Cell_Tag) {
-    shared_pointer: *Cell,
-    unique_pointer: *Cell,
-    constant: Constant,
-    code: Code,
-
-    pub inline fn from_cell(cell: Cell) Cell.Union {
-        return cell.to_union();
-    }
-
-    pub inline fn is_ptr(self: Cell.Union) bool {
-        return @as(Cell_Tag, self).is_ptr();
-    }
-
-    pub inline fn is_immediate(self: Cell.Union) bool {
-        return @as(Cell_Tag, self).is_immediate();
-    }
-};
-
-const Cell_Tag = enum(Int(.unsigned, Cell.tag_size)) {
-    shared_pointer = 0b00,
-    unique_pointer = 0b10,
-    constant = 0b01,
-    code = 0b11,
-
-    pub inline fn is_ptr(self: Cell_Tag) bool {
-        return @intFromEnum(self) & 0b1 == 0;
-    }
-
-    pub inline fn is_immediate(self: Cell_Tag) bool {
-        return !self.is_ptr();
     }
 };
 
@@ -233,7 +219,7 @@ pub const Code = packed struct(Cell.U) {
     }
 };
 
-pub const Block_Type = enum(Int(.unsigned, 8 - @bitSizeOf(Cell_Tag))) {
+pub const Block_Type = enum(Int(.unsigned, 8 - @bitSizeOf(Cell.Tag))) {
     short_str,
     str_branch,
     str,
@@ -253,8 +239,8 @@ pub const Block_Type = enum(Int(.unsigned, 8 - @bitSizeOf(Cell_Tag))) {
 };
 
 pub const Header = packed struct(Cell.U) {
-    const Safety_Tag = enum(@typeInfo(Cell_Tag).@"enum".tag_type) {
-        constant = @intFromEnum(Cell_Tag.constant),
+    const Safety_Tag = enum(@typeInfo(Cell.Tag).@"enum".tag_type) {
+        constant = @intFromEnum(Cell.Tag.constant),
     };
     pub const Size = Int(.unsigned, 8 * (@bitSizeOf(Cell.U) / 32));
     safety_tag: Safety_Tag = .constant,
@@ -314,3 +300,8 @@ test "everything" {
     _ = Instruction;
     _ = Code;
 }
+
+const std = @import("std");
+const Int = std.meta.Int;
+
+const assert = std.debug.assert;
