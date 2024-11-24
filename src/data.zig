@@ -172,39 +172,64 @@ pub const Instruction = enum(u5) {
 };
 
 pub const Code = packed struct(Cell.U) {
-    _: Padding(@bitSizeOf(Cell.U) - @bitSizeOf(Payload)) = .padding,
-    payload: Payload,
-
-    pub const instructions_per_cell = @bitSizeOf(Cell.U) / @bitSizeOf(Instruction);
+    pub const instructions_per_cell =
+        @bitSizeOf(Cell.U) / @bitSizeOf(Instruction);
 
     pub const Payload =
         Int(.unsigned, @bitSizeOf(Instruction) * instructions_per_cell);
 
-    pub inline fn current_instruction(self: Code) Instruction {
-        return @enumFromInt(
-            self.payload >> @bitSizeOf(Payload) - @bitSizeOf(Instruction),
-        );
+    payload: Payload,
+    _: Padding(@bitSizeOf(Cell.U) - @bitSizeOf(Payload)) = .padding,
+
+    pub const empty: Code = .{ .payload = 0 };
+
+    pub fn prepend(self: Code, inst: Instruction) Code {
+        return .{
+            .payload = self.payload << @bitSizeOf(Instruction) |
+                @intFromEnum(inst),
+        };
     }
-    pub inline fn step(self: Code) Code {
-        return .{ .payload = self.payload << @bitSizeOf(Instruction) };
+
+    pub fn current(self: Code) Instruction {
+        return @enumFromInt(self.payload &
+            std.math.maxInt(@typeInfo(Instruction).@"enum".tag_type));
     }
+
+    test "interactions between prepend, current and next" {
+        const sample = prepend(.empty, .tailcall);
+
+        try std.testing.expectEqual(sample.current(), .tailcall);
+        try std.testing.expectEqual(sample.next(), Code.empty);
+    }
+
+    pub fn next(self: Code) Code {
+        return .{ .payload = self.payload >> @bitSizeOf(Instruction) };
+    }
+
     pub fn to_array(self: Code) [instructions_per_cell]Instruction {
-        // for debugging
         var code = self;
         var instructions: [instructions_per_cell]Instruction = undefined;
-        for (instructions, 0..) |_, index| {
-            instructions[index] = code.current_instruction();
-            code = code.step();
+        for (&instructions) |*inst| {
+            inst.* = code.current();
+            code = code.next();
         }
         return instructions;
     }
     pub fn from_array(instructions: [instructions_per_cell]Instruction) Code {
-        var code: Payload = 0;
-        for (instructions) |inst| {
-            code <<= @bitSizeOf(Instruction);
-            code |= @intFromEnum(inst);
+        var code: Code = .empty;
+        var iter = std.mem.reverseIterator(&instructions);
+        while (iter.next()) |inst| {
+            code = code.prepend(inst);
         }
-        return .{ .payload = code };
+        return code;
+    }
+
+    test "array roundtrip" {
+        const code = comptime Code.empty.prepend(.tailcall);
+        const inst_array = comptime code.to_array();
+        const converted_code: Code = comptime .from_array(inst_array);
+
+        try comptime std.testing.expectEqual(code, converted_code);
     }
 };
 
