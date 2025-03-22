@@ -309,13 +309,13 @@ pub fn Stack(comptime Element: type) type {
     };
 }
 
+const std = @import("std");
+const Int = std.meta.Int;
+
+const assert = std.debug.assert;
+
 test "everything" {
     _ = Cell;
     _ = Instruction;
     _ = Code;
 }
-
-const std = @import("std");
-const Int = std.meta.Int;
-
-const assert = std.debug.assert;
