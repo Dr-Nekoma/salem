@@ -140,6 +140,7 @@ pub const Cell = packed struct(usize) {
             }
             const cell: Cell = .init(
                 @unionInit(Union, field.name, undefined),
+                // We can't just use 0 because of null pointers.
                 @enumFromInt(1 << (@alignOf(*Cell) - tag_size)),
             );
             const cell_roundtrip: Cell = .from_union(.from_cell(cell));
