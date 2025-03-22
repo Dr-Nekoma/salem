@@ -4,13 +4,13 @@ pub fn Padding(comptime size: comptime_int) type {
 
 pub const Cell = packed struct(usize) {
     tag: Tag,
-    payload: U,
+    payload: Payload,
 
-    pub fn init(tag: Tag, payload: U) Cell {
+    pub fn init(tag: Tag, payload: Payload) Cell {
         return .{ .tag = tag, .payload = payload };
     }
 
-    pub const Tag = enum(Int(.unsigned, tag_size)) {
+    pub const Tag = enum(utag) {
         shared_pointer = 0b00,
         unique_pointer = 0b10,
         constant = 0b01,
@@ -25,13 +25,10 @@ pub const Cell = packed struct(usize) {
         }
     };
 
-    pub const u = Int(.unsigned, payload_size);
-    pub const i = Int(.signed, payload_size);
+    pub const upayload = Int(.unsigned, payload_size);
+    pub const utag = Int(.unsigned, tag_size);
 
-    pub const U = enum(u) {
-        _,
-    };
-    pub const I = enum(u) {
+    pub const Payload = enum(upayload) {
         _,
     };
 
@@ -75,7 +72,7 @@ pub const Cell = packed struct(usize) {
     pub const ifixnum = Int(.signed, payload_size - 1);
     pub const ufixnum = Int(.unsigned, payload_size - 1);
 
-    pub const Constant = packed struct(u) {
+    pub const Constant = packed struct(upayload) {
         is_fixnum: bool,
         payload: ufixnum,
     };
@@ -162,7 +159,7 @@ pub const Cell = packed struct(usize) {
                 .shared_pointer,
                 => |ptr| @intFromPtr(ptr) >> tag_size,
 
-                inline else => |payload| @as(u, @bitCast(payload)),
+                inline else => |payload| @as(upayload, @bitCast(payload)),
             }),
         };
     }
@@ -229,12 +226,12 @@ pub const Instruction = enum(u5) {
     ret,
 };
 
-pub const Code = packed struct(Cell.u) {
+pub const Code = packed struct(Cell.upayload) {
     payload: Payload,
-    _: Padding(@bitSizeOf(Cell.U) - @bitSizeOf(Payload)) = .padding,
+    _: Padding(@bitSizeOf(Cell.Payload) - @bitSizeOf(Payload)) = .padding,
 
     pub const instructions_per_cell =
-        @bitSizeOf(Cell.U) / @bitSizeOf(Instruction);
+        @bitSizeOf(Cell.Payload) / @bitSizeOf(Instruction);
 
     pub const Payload =
         Int(.unsigned, @bitSizeOf(Instruction) * instructions_per_cell);
