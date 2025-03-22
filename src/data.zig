@@ -33,7 +33,9 @@ pub const Cell = packed struct(usize) {
 
     comptime {
         if (@ctz(@as(usize, @alignOf(*usize))) < tag_size) {
-            @compileError("Unsupported architecture");
+            @compileError(
+                \\Unsupported architecture: tag cannot fit in pointer alignment bits.
+            );
         }
     }
     pub const zero: Cell = .from_union(.{
