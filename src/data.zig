@@ -6,7 +6,7 @@ pub const Cell = packed struct(usize) {
         return .{ .tag = tag, .payload = payload };
     }
 
-    pub const Tag = enum(utag) {
+    pub const Tag = enum(Int(.unsigned, tag_size)) {
         shared_pointer = 0b00,
         unique_pointer = 0b10,
         constant = 0b01,
@@ -21,23 +21,10 @@ pub const Cell = packed struct(usize) {
         }
     };
 
-    pub const upayload = Int(.unsigned, payload_size);
-    pub const utag = Int(.unsigned, tag_size);
-
     pub const Payload = enum(upayload) {
         _,
     };
 
-    pub const tag_size = 2;
-    pub const payload_size = @bitSizeOf(*usize) - tag_size;
-
-    comptime {
-        if (@ctz(@as(usize, @alignOf(*usize))) < tag_size) {
-            @compileError(
-                \\Unsupported architecture: tag cannot fit in pointer alignment bits.
-            );
-        }
-    }
     pub const zero: Cell = .from_union(.{
         .constant = .{
             .is_fixnum = true,
@@ -131,25 +118,6 @@ pub const Cell = packed struct(usize) {
         };
     };
 
-    comptime {
-        assert(@typeInfo(Union).@"union".tag_type == Tag);
-        assert(tag_size == @bitSizeOf(Tag));
-        for (@typeInfo(Union).@"union".fields) |field| {
-            if (@typeInfo(field.type) == .pointer) {
-                assert(tag_size <= @ctz(@as(usize, @alignOf(field.type))));
-            } else {
-                assert(@bitSizeOf(field.type) + tag_size == @bitSizeOf(usize));
-            }
-            const cell: Cell = .init(
-                @unionInit(Union, field.name, undefined),
-                // We can't just use 0 because of null pointers.
-                @enumFromInt(1 << (@alignOf(*Cell) - tag_size)),
-            );
-            const cell_roundtrip: Cell = .from_union(.from_cell(cell));
-            assert(cell == cell_roundtrip);
-        }
-    }
-
     pub fn from_union(source: Union) Cell {
         return .{
             .tag = source,
@@ -182,6 +150,33 @@ pub const Cell = packed struct(usize) {
                 },
             ),
         };
+    }
+    const upayload = Int(.unsigned, payload_size);
+    const tag_size = 2;
+    const payload_size = @bitSizeOf(*usize) - tag_size;
+
+    comptime {
+        if (@ctz(@as(usize, @alignOf(*usize))) < tag_size) {
+            @compileError(
+                \\Unsupported architecture: tag cannot fit in pointer alignment bits.
+            );
+        }
+        assert(@typeInfo(Union).@"union".tag_type == Tag);
+        assert(tag_size == @bitSizeOf(Tag));
+        for (@typeInfo(Union).@"union".fields) |field| {
+            if (@typeInfo(field.type) == .pointer) {
+                assert(tag_size <= @ctz(@as(usize, @alignOf(field.type))));
+            } else {
+                assert(@bitSizeOf(field.type) + tag_size == @bitSizeOf(usize));
+            }
+            const cell: Cell = .init(
+                @unionInit(Union, field.name, undefined),
+                // We can't just use 0 because of null pointers.
+                @enumFromInt(1 << (@alignOf(*Cell) - tag_size)),
+            );
+            const cell_roundtrip: Cell = .from_union(.from_cell(cell));
+            assert(cell == cell_roundtrip);
+        }
     }
 };
 
@@ -227,7 +222,7 @@ pub const Instruction = enum(u5) {
     ret,
 };
 
-pub const Code = packed struct(Cell.upayload) {
+pub const Code = packed struct(std.meta.Tag(Cell.Payload)) {
     payload: Payload,
     _: Padding(@bitSizeOf(Cell.Payload) - @bitSizeOf(Payload)) = .padding,
 
