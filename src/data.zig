@@ -134,12 +134,6 @@ pub const Cell = packed struct(usize) {
         const Safety_Fixnum_Tag = enum(u1) {
             fixnum = @intFromBool(true),
         };
-
-        pub fn to_Block(self: *Header) type {
-            return switch (self.type_tag) {
-                inline else => |tag| Block(tag),
-            };
-        }
     };
 
     comptime {
@@ -296,44 +290,6 @@ pub const Code = packed struct(Cell.u) {
         try comptime std.testing.expectEqual(code, converted_code);
     }
 };
-
-pub const Block_Type = enum(Int(.unsigned, 8 - @bitSizeOf(Cell.Tag))) {
-    short_str,
-    str_branch,
-    str,
-    short_list,
-    list_branch,
-    list,
-    short_dict,
-    dict_branch,
-    dict,
-    short_set,
-    set_branch,
-    set,
-    short_mset,
-    mset_branch,
-    mset,
-    @"fn",
-};
-
-pub fn Block(comptime block_type: Block_Type) type {
-    const size = switch (block_type) {
-        .Str, .List, .Small => 4,
-        .ShortStr, .ShortList, .ShortSet, .Fn => 16,
-        .StrBranch, .ListBranch => 18,
-        .Set, .Dict, .Mset => 20,
-        .ShortDict, .ShortMset => 32,
-    };
-    if (size < 1) @compileError("Blocks must have at least one element");
-    return extern struct {
-        header: Cell.Header,
-        body: [capacity]Element,
-
-        pub const is_binary = block_type == .ShortStr;
-        pub const capacity = if (is_binary) size * @sizeOf(Cell) else size;
-        const Element = if (is_binary) u8 else Cell;
-    };
-}
 
 pub fn Stack(comptime Element: type) type {
     const stack_index_width = 4;
