@@ -158,7 +158,9 @@ pub const Cell = packed struct(usize) {
                 .shared_pointer,
                 => |ptr| @intFromPtr(ptr) >> tag_size,
 
-                inline else => |payload| @as(upayload, @bitCast(payload)),
+                inline .constant,
+                .code,
+                => |payload| @as(upayload, @bitCast(payload)),
             }),
         };
     }
