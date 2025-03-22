@@ -161,21 +161,18 @@ pub const Cell = packed struct(usize) {
                 \\Unsupported architecture: tag cannot fit in pointer alignment bits.
             );
         }
-        assert(@typeInfo(Union).@"union".tag_type == Tag);
-        assert(tag_size == @bitSizeOf(Tag));
         for (@typeInfo(Union).@"union".fields) |field| {
             if (@typeInfo(field.type) == .pointer) {
                 assert(tag_size <= @ctz(@as(usize, @alignOf(field.type))));
             } else {
-                assert(@bitSizeOf(field.type) + tag_size == @bitSizeOf(usize));
+                assert(@bitSizeOf(field.type) + tag_size == @bitSizeOf(Cell));
             }
             const cell: Cell = .init(
-                @unionInit(Union, field.name, undefined),
+                @field(Tag, field.name),
                 // We can't just use 0 because of null pointers.
                 @enumFromInt(1 << (@alignOf(*Cell) - tag_size)),
             );
-            const cell_roundtrip: Cell = .from_union(.from_cell(cell));
-            assert(cell == cell_roundtrip);
+            assert(cell == cell.to_union().to_cell());
         }
     }
 };
