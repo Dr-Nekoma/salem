@@ -1,7 +1,3 @@
-pub fn Padding(comptime size: comptime_int) type {
-    return enum(Int(.unsigned, size)) { padding = 0 };
-}
-
 pub const Cell = packed struct(usize) {
     tag: Tag,
     payload: Payload,
@@ -287,6 +283,10 @@ pub const Code = packed struct(Cell.upayload) {
         try comptime std.testing.expectEqual(code, converted_code);
     }
 };
+
+pub fn Padding(comptime size: comptime_int) type {
+    return enum(Int(.unsigned, size)) { padding = 0 };
+}
 
 pub fn Stack(comptime Element: type) type {
     const stack_index_width = 4;
