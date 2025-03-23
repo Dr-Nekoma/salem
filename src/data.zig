@@ -6,6 +6,115 @@ pub const Cell = packed struct(usize) {
         return .{ .tag = tag, .payload = payload };
     }
 
+    pub fn is_ptr(self: Cell) bool {
+        return self.tag.is_ptr();
+    }
+    pub fn is_immediate(self: Cell) bool {
+        return self.tag.is_immediate();
+    }
+
+    pub fn format(
+        self: Cell,
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        switch (self.to_union()) {
+            .code => |code| {
+                try writer.writeAll("($code");
+                for (code.to_array()) |instruction| {
+                    try writer.print(" {s}", .{@tagName(instruction)});
+                }
+                try writer.writeAll(")");
+            },
+            .constant => |constant| {
+                assert(constant.is_fixnum); // FIXME
+                try writer.print("#d{}", .{constant.payload});
+            },
+            .shared_pointer, .unique_pointer => |header| {
+                assert(header.?.type == .short_list); // FIXME
+                const list: *const Short_List = @constCast(@ptrCast(header));
+                switch (list.header.size) {
+                    .empty => unreachable,
+                    else => |size| {
+                        try writer.writeAll("[");
+                        try writer.print("{}", .{list.contents[0]});
+                        for (
+                            list.contents[1..size.to_int()],
+                            1..size.to_int(),
+                        ) |cell, _| {
+                            try writer.print(" {}", .{cell});
+                        }
+                        try writer.writeAll("]");
+                    },
+                }
+            },
+        }
+    }
+
+    const length_size = (8 * (@sizeOf(Cell) - 2)) / 2;
+    const ulength = Int(.unsigned, length_size);
+
+    pub const Index = enum(ulength) {
+        _,
+
+        pub inline fn from_int(n: ulength) Index {
+            return @enumFromInt(n);
+        }
+        pub inline fn to_int(self: Index) ulength {
+            return @intFromEnum(self);
+        }
+
+        pub inline fn in_range(self: Index, size: Size) bool {
+            return self.to_int() < size.to_int();
+        }
+    };
+
+    pub const Size = enum(ulength) {
+        empty = 0,
+        _,
+
+        pub inline fn from_int(n: ulength) Size {
+            return @enumFromInt(n);
+        }
+        pub inline fn to_int(self: Size) ulength {
+            return @intFromEnum(self);
+        }
+
+        pub inline fn can_grow(self: Size, capacity: Capacity) bool {
+            return self.to_int() < capacity.to_int();
+        }
+    };
+
+    pub const Capacity = enum(ulength) {
+        _,
+
+        pub inline fn from_int(n: ulength) Capacity {
+            return @enumFromInt(n);
+        }
+        pub inline fn to_int(self: Capacity) ulength {
+            return @intFromEnum(self);
+        }
+    };
+
+    pub fn nth(self: Cell, idx: Index) Cell {
+        std.debug.print("Cell.init({}, {b})\n", .{ self.tag, @intFromEnum(self.payload) });
+        switch (self.to_union()) {
+            .code, .constant => return .nil,
+            .shared_pointer => |ptr| {
+                const cell = nth_unique(@ptrCast(ptr), idx);
+                return .{
+                    .tag = if (cell.tag == .unique_pointer)
+                        .shared_pointer
+                    else
+                        cell.tag,
+                    .payload = cell.payload,
+                };
+            },
+            .unique_pointer => |ptr| return nth_unique(@ptrCast(ptr), idx),
+        }
+    }
+
     pub const Tag = enum(Int(.unsigned, tag_size)) {
         shared_pointer = 0b00,
         unique_pointer = 0b10,
@@ -31,8 +140,10 @@ pub const Cell = packed struct(usize) {
             .payload = 0,
         },
     });
+    pub const nil: Cell = .from_union(.{ .shared_pointer = null });
+
     pub const Union = union(Tag) {
-        shared_pointer: *Header,
+        shared_pointer: ?*Header,
         unique_pointer: *Header,
         constant: Constant,
         code: Code,
@@ -82,6 +193,11 @@ pub const Cell = packed struct(usize) {
             is_binary: bool,
             has_binary_word: bool,
             _: Padding(gc_bits_size - 2) = .padding,
+
+            pub const normal: GC_Bits = .{
+                .is_binary = false,
+                .has_binary_word = false,
+            };
         };
         pub const Type = enum(u8) {
             short_string,
@@ -98,17 +214,6 @@ pub const Cell = packed struct(usize) {
             function,
             object,
         };
-        const length_size = (8 * (@sizeOf(Cell) - 2)) / 2;
-        const ulength = Int(.unsigned, length_size);
-
-        pub const Size = enum(ulength) {
-            _,
-        };
-
-        pub const Capacity = enum(ulength) {
-            _,
-        };
-
         const Safety_Cell_Tag = enum(@typeInfo(Cell.Tag).@"enum".tag_type) {
             constant = @intFromEnum(Cell.Tag.constant),
         };
@@ -134,9 +239,6 @@ pub const Cell = packed struct(usize) {
     }
 
     pub fn to_union(self: Cell) Union {
-        const mask: usize = comptime @truncate(
-            std.math.maxInt(usize) << @alignOf(*Cell),
-        );
         return switch (self.tag) {
             inline else => |tag| @unionInit(
                 Union,
@@ -144,13 +246,29 @@ pub const Cell = packed struct(usize) {
                 switch (tag) {
                     .unique_pointer,
                     .shared_pointer,
-                    => @ptrFromInt(@as(usize, @bitCast(self)) & mask),
-
-                    .constant, .code => @bitCast(@intFromEnum(self.payload)),
+                    => @ptrFromInt(
+                        @as(usize, @intFromEnum(self.payload)) << tag_size,
+                    ),
+                    .constant, .code => @bitCast(
+                        @intFromEnum(self.payload),
+                    ),
                 },
             ),
         };
     }
+
+    fn nth_unique(header: [*]const Cell.Header, idx: Index) Cell {
+        if (header[0].gc_bits.is_binary) return .nil;
+        const size = header[0].size;
+        if (idx.in_range(size)) return .nil;
+        const has_binary_word = @intFromBool(header[0].gc_bits.has_binary_word);
+        const header_slice = header[1 + has_binary_word .. size.to_int() + 1 + has_binary_word];
+        return @as(
+            Cell,
+            @bitCast(header_slice[idx.to_int() + has_binary_word]),
+        );
+    }
+
     const upayload = Int(.unsigned, payload_size);
     const tag_size = 2;
     const payload_size = @bitSizeOf(*usize) - tag_size;
@@ -162,10 +280,19 @@ pub const Cell = packed struct(usize) {
             );
         }
         for (@typeInfo(Union).@"union".fields) |field| {
-            if (@typeInfo(field.type) == .pointer) {
-                assert(tag_size <= @ctz(@as(usize, @alignOf(field.type))));
-            } else {
-                assert(@bitSizeOf(field.type) + tag_size == @bitSizeOf(Cell));
+            const T = field.type;
+            size_check: switch (@typeInfo(T)) {
+                .pointer => {
+                    assert(tag_size <= @ctz(@as(usize, @alignOf(T))));
+                },
+                .optional => |Optional| {
+                    const nested_type = @typeInfo(Optional.child);
+                    assert(nested_type == .pointer);
+                    continue :size_check nested_type;
+                },
+                else => {
+                    assert(@bitSizeOf(T) + tag_size == @bitSizeOf(Cell));
+                },
             }
             const cell: Cell = .init(
                 @field(Tag, field.name),
@@ -303,6 +430,59 @@ pub fn Stack(comptime Element: type) type {
             return &(self.stack[next -% 1]);
         }
     };
+}
+
+const base_size = 16;
+
+fn unique(comptime T: type) fn (self: *T) Cell {
+    return struct {
+        pub fn f(self: *T) Cell {
+            return .from_union(.{ .unique_pointer = @ptrCast(self) });
+        }
+    }.f;
+}
+fn shared(comptime T: type) fn (self: *T) Cell {
+    return struct {
+        pub fn f(self: *T) Cell {
+            return .from_union(.{ .shared_pointer = @ptrCast(self) });
+        }
+    }.f;
+}
+
+const Short_List = extern struct {
+    header: Cell.Header,
+    contents: [base_size]Cell,
+
+    pub const empty: Short_List = .{
+        .header = .{
+            .gc_bits = .normal,
+            .type = .short_list,
+            .size = @enumFromInt(0),
+            .capacity = @enumFromInt(base_size),
+        },
+        .contents = undefined,
+    };
+
+    pub const to_shared = shared(Short_List);
+    pub const to_unique = unique(Short_List);
+
+    pub fn pushr(self: *Short_List, value: Cell) bool {
+        const size = self.header.size;
+        if (size.can_grow(self.header.capacity)) {
+            self.contents[size.to_int()] = value;
+            self.header.size = @enumFromInt(size.to_int() + 1);
+            return true;
+        } else return false;
+    }
+};
+
+test Short_List {
+    var list: Short_List = .empty;
+    try std.testing.expect(list.pushr(.zero));
+    try std.testing.expect(list.header.size.to_int() == 1);
+    try std.testing.expect(@intFromPtr(&list.header) == @intFromPtr(&list));
+    try std.testing.expect(@intFromPtr(&list) == @as(usize, @bitCast(list.to_shared())));
+    try std.testing.expect(@intFromPtr(&list) == @intFromPtr(list.to_shared().to_union().shared_pointer));
 }
 
 const std = @import("std");
