@@ -448,6 +448,13 @@ fn shared(comptime T: type) fn (self: *T) Cell {
         }
     }.f;
 }
+fn as_slice(comptime T: type) fn (self: *T) []Cell {
+    return struct {
+        pub fn f(self: *T) []Cell {
+            return self.contents[0..self.header.size.to_int()];
+        }
+    }.f;
+}
 
 const Short_List = extern struct {
     header: Cell.Header,
@@ -465,6 +472,7 @@ const Short_List = extern struct {
 
     pub const to_shared = shared(Short_List);
     pub const to_unique = unique(Short_List);
+    pub const to_slice = as_slice(Short_List);
 
     pub fn pushr(self: *Short_List, value: Cell) bool {
         const size = self.header.size;
