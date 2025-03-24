@@ -6,11 +6,11 @@ pub const Cell = packed struct(usize) {
         return .{ .tag = tag, .payload = payload };
     }
 
-    pub fn is_ptr(self: Cell) bool {
-        return self.tag.is_ptr();
-    }
-    pub fn is_immediate(self: Cell) bool {
-        return self.tag.is_immediate();
+    pub fn share(self: *Cell) void {
+        switch (self.tag) {
+            .unique_pointer => self.tag = .shared_pointer,
+            else => {},
+        }
     }
 
     pub fn format(
@@ -120,14 +120,6 @@ pub const Cell = packed struct(usize) {
         unique_pointer = 0b10,
         constant = 0b01,
         code = 0b11,
-
-        pub fn is_ptr(self: Tag) bool {
-            return @intFromEnum(self) & 0b1 == 0;
-        }
-
-        pub fn is_immediate(self: Tag) bool {
-            return !self.is_ptr();
-        }
     };
 
     pub const Payload = enum(upayload) {
@@ -154,14 +146,6 @@ pub const Cell = packed struct(usize) {
 
         pub fn to_cell(self: Union) Cell {
             return .from_union(self);
-        }
-
-        pub fn is_ptr(self: Union) bool {
-            return @as(Tag, self).is_ptr();
-        }
-
-        pub fn is_immediate(self: Union) bool {
-            return @as(Tag, self).is_immediate();
         }
     };
 
